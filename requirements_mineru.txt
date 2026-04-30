@@ -1,0 +1,11 @@
+# Core dependencies with pinned versions to avoid resolution conflicts
+torch==2.4.1
+torchvision==0.19.1
+torchaudio==2.4.1
+accelerate
+mineru[all]
+transformers
+shapely
+modelscope
+pypdfium2==4.30.0
+setuptools<82
