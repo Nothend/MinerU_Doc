@@ -4,7 +4,7 @@ torchvision==0.19.1
 torchaudio==2.4.1
 accelerate
 mineru[all]
-transformers
+transformers==4.57.2
 shapely
 modelscope
 pypdfium2==4.30.0

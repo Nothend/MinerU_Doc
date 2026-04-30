@@ -113,6 +113,68 @@ def multithreaded_copy(src, dst, max_workers=12):
                 print(f"\r  进度: {done}/{total} ({done*100/total:.1f}%)", end="", flush=True)
     print() # 换行
 
+def run_smoke_test_only():
+    """仅运行冒烟测试模式"""
+    log_info("进入冒烟测试模式...")
+    
+    python_exe = ENV_DIR / "python.exe"
+    if not python_exe.exists():
+        log_fatal(f"环境不存在：{ENV_DIR}\n请先选择 [1] 完整部署流程")
+    
+    test_pdf = ROOT_DIR / "test.pdf"
+    if not test_pdf.exists():
+        log_fatal(f"未找到测试文件：{test_pdf}\n请将测试 PDF 放置在 D:\\ai_offline_pack\\test.pdf")
+    
+    # 检查 mineru.exe
+    mineru_exe = ENV_DIR / "Scripts" / "mineru.exe"
+    if not mineru_exe.exists():
+        log_fatal("未找到 mineru.exe，环境可能不完整")
+    
+    # 配置 HF 环境变量
+    hf_home = MODEL_ROOT / "hf_cache"
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["HF_HOME"] = str(hf_home)
+    
+    log_info(f"运行 GPU 冒烟测试：{test_pdf}")
+    output_dir = ROOT_DIR / "output_gpu"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    try:
+        result = run_cmd([
+            str(mineru_exe), "-p", str(test_pdf), 
+            "-o", str(output_dir), 
+            "--device", "cuda"
+        ], env={"HF_HUB_OFFLINE": "1", "HF_HOME": str(hf_home)}, check=False)
+        
+        if result.returncode == 0:
+            log_ok("GPU 冒烟测试通过。")
+            log_info(f"输出目录：{output_dir}")
+        else:
+            log_error(f"冒烟测试运行失败，退出码：{result.returncode}")
+            log_warn("\n=====================================================")
+            log_warn("常见错误排查指南:")
+            log_warn("=====================================================")
+            log_warn("1. AttributeError: 'Qwen2VLConfig' object has no attribute 'max_position_embeddings'")
+            log_warn("   原因：transformers 5.x 与 Qwen2VL 模型不兼容")
+            log_warn("   解决：重新运行部署脚本，选择 [1] 完整部署流程 (会自动降级 transformers)")
+            log_warn("")
+            log_warn("2. CUDA out of memory")
+            log_warn("   原因：显存不足")
+            log_warn("   解决：关闭其他占用 GPU 的程序，或降低 batch_size")
+            log_warn("")
+            log_warn("3. ModuleNotFoundError: No module named 'xxx'")
+            log_warn("   原因：依赖包缺失")
+            log_warn("   解决：检查 wheels 目录是否包含所有必要的 wheel 文件")
+            log_warn("=====================================================")
+            log_warn("\n详细错误信息请查看上方日志。")
+    except Exception as e:
+        log_error(f"冒烟测试运行失败：{e}")
+        log_warn("\n如果遇到 AttributeError: 'Qwen2VLConfig' object has no attribute 'max_position_embeddings'")
+        log_warn("这可能是 transformers 版本兼容性问题。")
+        log_warn("请重新运行部署脚本，选择 [1] 完整部署流程。")
+    
+    input("按任意键退出...")
+
 def main():
     os.system('color') # 开启 Windows 终端颜色支持
     
@@ -123,6 +185,21 @@ def main():
     print(f"  EXPORT_DIR : {EXPORT_ENV_DIR}")
     print()
 
+    # --- STEP 0: 选择模式 ---
+    print(f"{Color.YELLOW}====================================================={Color.END}")
+    print(f"{Color.BOLD}   请选择操作模式{Color.END}")
+    print(f"{Color.YELLOW}====================================================={Color.END}")
+    print(f"  {Color.BOLD}[1] 完整部署流程{Color.END} - 复制环境、安装依赖、配置模型")
+    print(f"  {Color.BOLD}[2] 仅运行冒烟测试{Color.END} - 跳过部署，直接测试现有环境")
+    choice = input(f"\n  请选择 (1/2) [默认 1]: ").strip()
+    
+    if choice == "2":
+        # 仅运行冒烟测试模式
+        run_smoke_test_only()
+        return
+    
+    # --- 完整部署流程 ---
+    
     # --- STEP 1: 确定模式与清理 ---
     mode = "FULL"
     python_exe = ENV_DIR / "python.exe"
@@ -193,6 +270,25 @@ def main():
         "--no-index", f"--find-links={WHEEL_DIR}", 
         "mineru", "--force-reinstall", "--no-deps"
     ])
+    
+    # 关键修复：降级 transformers 到兼容版本
+    # transformers 5.x 与 Qwen2VL 模型存在兼容性问题 (AttributeError: max_position_embeddings)
+    log_info("修复 transformers 版本兼容性...")
+    log_warn("检测到 transformers 5.x 与 Qwen2VL 模型不兼容，降级到 4.57.2...")
+    run_cmd([
+        str(python_exe), "-m", "pip", "install", 
+        "--no-index", f"--find-links={WHEEL_DIR}", 
+        "transformers==4.57.2", "--force-reinstall"
+    ], check=False)
+    # 如果本地没有 4.57.2，尝试安装 4.56.0
+    if run_cmd([str(python_exe), "-c", "import transformers; assert transformers.__version__.startswith('4.5')"], check=False).returncode != 0:
+        log_warn("本地 wheels 无 transformers 4.57.2，尝试 4.56.0...")
+        run_cmd([
+            str(python_exe), "-m", "pip", "install", 
+            "--no-index", f"--find-links={WHEEL_DIR}", 
+            "transformers==4.56.0", "--force-reinstall"
+        ], check=False)
+    
     log_ok("GPU 核心依赖安装/修复完成。")
 
     # --- STEP 6: 业务依赖同步 ---
@@ -282,29 +378,67 @@ if failed:
     else:
         log_error("部分核心依赖损坏，请检查 pip install 日志。")
 
-    # --- STEP 10: 冒烟测试 ---
+    # --- STEP 10: 询问是否运行冒烟测试 ---
+    run_smoke_test = False
     test_pdf = ROOT_DIR / "test.pdf"
     if test_pdf.exists():
-        log_info(f"运行 GPU 冒烟测试: {test_pdf}")
-        mineru_exe = ENV_DIR / "Scripts" / "mineru.exe"
-        if mineru_exe.exists():
-            try:
-                run_cmd([
-                    str(mineru_exe), "-p", str(test_pdf), 
-                    "-o", str(ROOT_DIR / "output_gpu"), 
-                    "--device", "cuda"
-                ], env={"HF_HUB_OFFLINE": "1", "HF_HOME": str(hf_home)})
-                log_ok("GPU 冒烟测试通过。")
-            except:
-                log_error("冒烟测试运行失败。")
-        else:
-            log_warn("未找到 mineru.exe，跳过测试。")
+        print(f"\n{Color.YELLOW}====================================================={Color.END}")
+        print(f"{Color.BOLD}   冒烟测试选项{Color.END}")
+        print(f"{Color.YELLOW}====================================================={Color.END}")
+        print(f"  检测到测试文件：{test_pdf}")
+        print(f"  {Color.BOLD}[1] 立即运行 GPU 冒烟测试{Color.END}")
+        print(f"  {Color.BOLD}[2] 跳过测试 (可稍后手动运行){Color.END}")
+        choice = input(f"\n  请选择 (1/2) [默认 2]: ").strip()
+        
+        if choice == "1":
+            run_smoke_test = True
     else:
-        log_info("未找到 test.pdf，跳过冒烟测试。")
+        log_info("未找到 test.pdf，如需运行冒烟测试，请将测试 PDF 放置在 D:\\ai_offline_pack\\test.pdf")
 
     print(f"\n{Color.GREEN}====================================================={Color.END}")
     print(f"{Color.BOLD}   部署成功！env_mineru 已可以使用。{Color.END}")
     print(f"{Color.GREEN}====================================================={Color.END}\n")
+    
+    # --- STEP 11: 可选的冒烟测试 ---
+    if run_smoke_test:
+        log_info(f"运行 GPU 冒烟测试：{test_pdf}")
+        mineru_exe = ENV_DIR / "Scripts" / "mineru.exe"
+        if mineru_exe.exists():
+            try:
+                result = run_cmd([
+                    str(mineru_exe), "-p", str(test_pdf), 
+                    "-o", str(ROOT_DIR / "output_gpu"), 
+                    "--device", "cuda"
+                ], env={"HF_HUB_OFFLINE": "1", "HF_HOME": str(hf_home)}, check=False)
+                
+                if result.returncode == 0:
+                    log_ok("GPU 冒烟测试通过。")
+                else:
+                    log_error(f"冒烟测试运行失败，退出码：{result.returncode}")
+                    log_warn("\n=====================================================")
+                    log_warn("常见错误排查指南:")
+                    log_warn("=====================================================")
+                    log_warn("1. AttributeError: 'Qwen2VLConfig' object has no attribute 'max_position_embeddings'")
+                    log_warn("   原因：transformers 5.x 与 Qwen2VL 模型不兼容")
+                    log_warn("   解决：已自动降级到 transformers==4.57.2，请重新运行部署脚本")
+                    log_warn("")
+                    log_warn("2. CUDA out of memory")
+                    log_warn("   原因：显存不足")
+                    log_warn("   解决：关闭其他占用 GPU 的程序，或降低 batch_size")
+                    log_warn("")
+                    log_warn("3. ModuleNotFoundError: No module named 'xxx'")
+                    log_warn("   原因：依赖包缺失")
+                    log_warn("   解决：检查 wheels 目录是否包含所有必要的 wheel 文件")
+                    log_warn("=====================================================")
+                    log_warn("\n详细错误信息请查看上方日志。")
+            except Exception as e:
+                log_error(f"冒烟测试运行失败：{e}")
+                log_warn("\n如果遇到 AttributeError: 'Qwen2VLConfig' object has no attribute 'max_position_embeddings'")
+                log_warn("这可能是 transformers 版本兼容性问题。")
+                log_warn("本脚本已自动将 transformers 降级到 4.57.2，请重新运行部署脚本。")
+        else:
+            log_warn("未找到 mineru.exe，无法运行测试。")
+    
     input("按任意键退出...")
 
 if __name__ == "__main__":
