@@ -179,6 +179,201 @@ def run_smoke_test_only():
     
     input("按任意键退出...")
 
+def apply_incremental_patch():
+    """应用增量补丁模式：从 patch 目录读取最新的 ZIP 补丁包并执行安装/卸载/升级"""
+    log_info("=" * 50)
+    log_info("进入增量补丁模式...")
+    log_info("=" * 50)
+    
+    # 检查 patch 目录是否存在
+    if not PATCH_DIR.exists():
+        log_fatal(
+            f"补丁目录不存在：{PATCH_DIR}\n\n"
+            "【使用说明】\n"
+            "请将 A 机生成的补丁包 ZIP 文件放置到以下位置：\n"
+            f"  {PATCH_DIR}\\MinerU_Patch_v*.zip\n\n"
+            "【操作步骤】\n"
+            "1. 在 A 机运行 build_env_mineru_pack.py，选择 [2] 增量补丁包\n"
+            "2. A 机会生成类似 MinerU_Patch_v1.0.0_20250101_120000.zip 的文件\n"
+            "3. 将该 ZIP 文件复制到 B 机的 {PATCH_DIR} 目录下\n"
+            "4. 重新运行本脚本，选择 [2] 应用增量更新补丁"
+        )
+    
+    # 查找最新的补丁包
+    patch_files = list(PATCH_DIR.glob("MinerU_Patch_v*.zip"))
+    if not patch_files:
+        log_fatal(
+            f"未找到补丁包文件 (MinerU_Patch_v*.zip)：{PATCH_DIR}\n\n"
+            "【使用说明】\n"
+            "请将 A 机生成的补丁包 ZIP 文件放置到以下位置：\n"
+            f"  {PATCH_DIR}\\MinerU_Patch_v*.zip\n\n"
+            "【patch_config.json 格式参考 (在 A 机创建)】\n"
+            "{\n"
+            '  "version": "1.0.0",\n'
+            '  "description": "修复 transformers 兼容性问题",\n'
+            '  "packages": {\n'
+            '    "install": ["transformers==4.57.2", "huggingface_hub==0.30.2"],\n'
+            '    "uninstall": ["torch-cpu"],\n'
+            '    "upgrade": ["mineru"]\n'
+            '  },\n'
+            '  "smoke_test": true\n'
+            "}\n\n"
+            "【操作步骤】\n"
+            "1. 在 A 机的 D:\\ai_offline_pack 目录下创建 patch_config.json\n"
+            "2. 在 A 机运行 build_env_mineru_pack.py，选择 [2] 增量补丁包\n"
+            "3. A 机会自动生成 ZIP 补丁包 (包含 manifest.json 和所需 wheels)\n"
+            "4. 将 ZIP 文件复制到 B 机的 {PATCH_DIR} 目录下\n"
+            "5. 重新运行本脚本，选择 [2] 应用增量更新补丁"
+        )
+    
+    # 按文件名排序获取最新的补丁包 (文件名包含时间戳)
+    latest_patch = sorted(patch_files)[-1]
+    log_ok(f"检测到最新补丁包：{latest_patch.name}")
+    
+    # 解压补丁包到临时目录
+    temp_extract_dir = PATCH_DIR / "temp_extract"
+    if temp_extract_dir.exists():
+        shutil.rmtree(temp_extract_dir)
+    temp_extract_dir.mkdir(parents=True, exist_ok=True)
+    
+    log_info(f"正在解压补丁包到：{temp_extract_dir}")
+    with zipfile.ZipFile(latest_patch, 'r') as zipf:
+        zipf.extractall(temp_extract_dir)
+    
+    # 读取 manifest.json
+    manifest_file = temp_extract_dir / "manifest.json"
+    if not manifest_file.exists():
+        log_fatal(f"补丁包中缺少 manifest.json 文件，补丁包可能已损坏")
+    
+    try:
+        with open(manifest_file, "r", encoding="utf-8") as f:
+            manifest = json.load(f)
+        log_ok(f"已加载补丁清单：{manifest.get('version', '未知版本')} - {manifest.get('description', '无描述')}")
+    except Exception as e:
+        log_fatal(f"读取 manifest.json 失败：{e}")
+    
+    # 验证环境是否存在
+    python_exe = ENV_DIR / "python.exe"
+    if not python_exe.exists():
+        log_fatal(
+            f"环境不存在：{ENV_DIR}\n"
+            "增量补丁模式需要已有环境存在。\n"
+            "请先选择 [1] 完整部署流程 创建环境。"
+        )
+    
+    # 获取 pip 路径
+    pip_exe = ENV_DIR / "Scripts" / "pip.exe"
+    if not pip_exe.exists():
+        log_fatal(f"未找到 pip.exe: {pip_exe}")
+    
+    # 将补丁包中的 wheels 复制到本地 wheels 目录
+    patch_wheels_found = False
+    for item in temp_extract_dir.iterdir():
+        if item.is_dir() and item.name != "__MACOSX":
+            if any(item.glob("*.whl")):
+                log_info(f"正在复制补丁包中的 wheels 到本地目录：{item} -> {WHEEL_DIR}")
+                multithreaded_copy(item, WHEEL_DIR, max_workers=8)
+                patch_wheels_found = True
+                break
+    
+    if patch_wheels_found:
+        log_ok("Wheels 复制完成。")
+    else:
+        log_warn("补丁包中未找到 wheel 文件，可能只包含配置变更。")
+    
+    packages_config = manifest.get("packages", {})
+    
+    # 1. 执行卸载操作
+    uninstall_list = packages_config.get("uninstall", [])
+    if uninstall_list:
+        log_info(f"正在卸载 {len(uninstall_list)} 个包...")
+        for pkg in uninstall_list:
+            log_info(f"  卸载：{pkg}")
+            run_cmd([str(pip_exe), "uninstall", "-y", pkg], check=False)
+        log_ok("卸载完成。")
+    
+    # 2. 执行安装操作（新包或指定版本）
+    install_list = packages_config.get("install", [])
+    if install_list:
+        log_info(f"正在安装 {len(install_list)} 个包...")
+        for pkg in install_list:
+            spec = pkg['spec'] if isinstance(pkg, dict) else pkg
+            log_info(f"  安装：{spec}")
+        specs = [pkg['spec'] if isinstance(pkg, dict) else pkg for pkg in install_list]
+        run_cmd([
+            str(python_exe), "-m", "pip", "install",
+            "--no-index",
+            f"--find-links={WHEEL_DIR}",
+            *specs,
+            "--force-reinstall",
+            "--no-deps"
+        ], check=False)
+        log_ok("安装完成。")
+    
+    # 3. 执行升级操作
+    upgrade_list = packages_config.get("upgrade", [])
+    if upgrade_list:
+        log_info(f"正在升级 {len(upgrade_list)} 个包...")
+        for pkg in upgrade_list:
+            spec = pkg['spec'] if isinstance(pkg, dict) else pkg
+            log_info(f"  升级：{spec}")
+        specs = [pkg['spec'] if isinstance(pkg, dict) else pkg for pkg in upgrade_list]
+        run_cmd([
+            str(python_exe), "-m", "pip", "install",
+            "--no-index",
+            f"--find-links={WHEEL_DIR}",
+            *specs,
+            "--upgrade",
+            "--no-deps"
+        ], check=False)
+        log_ok("升级完成。")
+    
+    # 清理临时目录
+    log_info("清理临时文件...")
+    shutil.rmtree(temp_extract_dir)
+    
+    # 4. 可选：运行冒烟测试
+    smoke_test = manifest.get("smoke_test", False)
+    if smoke_test:
+        print(f"\n{Color.YELLOW}====================================================={Color.END}")
+        print(f"{Color.BOLD}   冒烟测试选项{Color.END}")
+        print(f"{Color.YELLOW}====================================================={Color.END}")
+        test_pdf = ROOT_DIR / "test.pdf"
+        if test_pdf.exists():
+            print(f"  检测到测试文件：{test_pdf}")
+            print(f"  {Color.BOLD}[1] 立即运行 GPU 冒烟测试{Color.END}")
+            print(f"  {Color.BOLD}[2] 跳过测试{Color.END}")
+            choice = input(f"\n  请选择 (1/2) [默认 2]: ").strip()
+            
+            if choice == "1":
+                log_info(f"运行 GPU 冒烟测试：{test_pdf}")
+                mineru_exe = ENV_DIR / "Scripts" / "mineru.exe"
+                if mineru_exe.exists():
+                    hf_home = MODEL_ROOT / "hf_cache"
+                    os.environ["HF_HUB_OFFLINE"] = "1"
+                    os.environ["HF_HOME"] = str(hf_home)
+                    output_dir = ROOT_DIR / "output_gpu"
+                    output_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    result = run_cmd([
+                        str(mineru_exe), "-p", str(test_pdf),
+                        "-o", str(output_dir),
+                        "--device", "cuda"
+                    ], env={"HF_HUB_OFFLINE": "1", "HF_HOME": str(hf_home)}, check=False)
+                    
+                    if result.returncode == 0:
+                        log_ok("GPU 冒烟测试通过。")
+                    else:
+                        log_error(f"冒烟测试运行失败，退出码：{result.returncode}")
+                else:
+                    log_warn("未找到 mineru.exe，无法运行测试。")
+        else:
+            log_warn(f"未找到测试文件：{test_pdf}，跳过冒烟测试。")
+    
+    log_ok("增量补丁应用完成！")
+    input("按任意键退出...")
+
+
 def main():
     os.system('color') # 开启 Windows 终端颜色支持
     
@@ -200,8 +395,7 @@ def main():
     
     if choice == "2":
         # 应用增量补丁模式
-        log_warn("增量补丁功能暂未实现，请使用完整部署流程。")
-        input("按任意键退出...")
+        apply_incremental_patch()
         return
     elif choice == "3":
         # 仅运行冒烟测试模式
