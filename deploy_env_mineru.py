@@ -160,7 +160,7 @@ def run_smoke_test_only():
             log_warn("=====================================================")
             log_warn("1. AttributeError: 'Qwen2VLConfig' object has no attribute 'max_position_embeddings'")
             log_warn("   原因：transformers 5.x 与 Qwen2VL 模型不兼容")
-            log_warn("   解决：重新运行部署脚本，选择 [1] 完整部署流程 (会自动降级 transformers)")
+            log_warn("   解决：requirements_mineru.txt 已锁定 transformers==4.57.2，请检查 wheels 目录是否包含该版本")
             log_warn("")
             log_warn("2. CUDA out of memory")
             log_warn("   原因：显存不足")
@@ -200,7 +200,7 @@ def main():
     
     if choice == "2":
         # 应用增量补丁模式
-        apply_patch()
+        log_warn("增量补丁功能暂未实现，请使用完整部署流程。")
         input("按任意键退出...")
         return
     elif choice == "3":
@@ -273,39 +273,14 @@ def main():
         "--no-deps"
     ])
     
-    # 修复入口点
-    log_info("修复 mineru 入口点...")
-    run_cmd([
-        str(python_exe), "-m", "pip", "install", 
-        "--no-index", f"--find-links={WHEEL_DIR}", 
-        "mineru", "--force-reinstall", "--no-deps"
-    ])
-    
-    # 关键修复：降级 transformers 到兼容版本
-    # transformers 5.x 与 Qwen2VL 模型存在兼容性问题 (AttributeError: max_position_embeddings)
-    log_info("修复 transformers 版本兼容性...")
-    log_warn("检测到 transformers 5.x 与 Qwen2VL 模型不兼容，降级到 4.57.2...")
-    run_cmd([
-        str(python_exe), "-m", "pip", "install", 
-        "--no-index", f"--find-links={WHEEL_DIR}", 
-        "transformers==4.57.2", "--force-reinstall"
-    ], check=False)
-    # 如果本地没有 4.57.2，尝试安装 4.56.0
-    if run_cmd([str(python_exe), "-c", "import transformers; assert transformers.__version__.startswith('4.5')"], check=False).returncode != 0:
-        log_warn("本地 wheels 无 transformers 4.57.2，尝试 4.56.0...")
-        run_cmd([
-            str(python_exe), "-m", "pip", "install", 
-            "--no-index", f"--find-links={WHEEL_DIR}", 
-            "transformers==4.56.0", "--force-reinstall"
-        ], check=False)
-    
-    log_ok("GPU 核心依赖安装/修复完成。")
+
+    log_ok("GPU Torch 安装完成。")
 
     # --- STEP 6: 业务依赖同步 ---
     log_info("同步业务依赖 (transformers, mineru[all] 等)...")
     
     # 寻找 requirements_mineru.txt
-    req_file = ROOT_DIR / "scripts" / "env_init" / REQ_FILE_NAME
+    req_file = ROOT_DIR / REQ_FILE_NAME
     if not req_file.exists():
         req_file = Path(__file__).parent / REQ_FILE_NAME
     
@@ -324,6 +299,8 @@ def main():
             "-r", str(sync_file)
         ], check=False)
 
+
+    log_ok("GPU 核心依赖安装完成。")
     # --- STEP 7: HF 缓存结构配置 ---
     log_info("配置 HuggingFace 离线缓存...")
     hf_home = MODEL_ROOT / "hf_cache"
@@ -430,7 +407,7 @@ if failed:
                     log_warn("=====================================================")
                     log_warn("1. AttributeError: 'Qwen2VLConfig' object has no attribute 'max_position_embeddings'")
                     log_warn("   原因：transformers 5.x 与 Qwen2VL 模型不兼容")
-                    log_warn("   解决：已自动降级到 transformers==4.57.2，请重新运行部署脚本")
+                    log_warn("   解决：requirements_mineru.txt 已锁定 transformers==4.57.2，请检查 wheels 目录是否包含该版本")
                     log_warn("")
                     log_warn("2. CUDA out of memory")
                     log_warn("   原因：显存不足")
@@ -445,7 +422,7 @@ if failed:
                 log_error(f"冒烟测试运行失败：{e}")
                 log_warn("\n如果遇到 AttributeError: 'Qwen2VLConfig' object has no attribute 'max_position_embeddings'")
                 log_warn("这可能是 transformers 版本兼容性问题。")
-                log_warn("本脚本已自动将 transformers 降级到 4.57.2，请重新运行部署脚本。")
+                log_warn("requirements_mineru.txt 已锁定 transformers==4.57.2，请检查 wheels 目录是否包含该版本")
         else:
             log_warn("未找到 mineru.exe，无法运行测试。")
     
