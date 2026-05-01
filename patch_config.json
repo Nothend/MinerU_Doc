@@ -1,0 +1,16 @@
+{
+  "version": "1.0.0",
+  "description": "修复 transformers 与 Qwen2VL 兼容性问题",
+  "created_at": "2024-01-01 12:00:00",
+  "packages": {
+    "install": [
+      {"spec": "transformers==4.57.2", "with_deps": true}
+    ],
+    "uninstall": [],
+    "upgrade": []
+  },
+  "smoke_test": {
+    "enabled": true,
+    "test_code": "\nimport transformers\nfrom transformers import AutoConfig\ntry:\n    config = AutoConfig.from_pretrained('Qwen/Qwen2-VL-2B-Instruct', trust_remote_code=True)\n    _ = getattr(config, 'max_position_embeddings', None)\n    print('COMPATIBLE')\nexcept AttributeError as e:\n    if 'max_position_embeddings' in str(e):\n        print('INCOMPATIBLE')\n        exit(1)\n    else:\n        raise\n"
+  }
+}
