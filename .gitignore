@@ -1,24 +1,55 @@
 ```
 # Dependencies
+*.txt
+!requirements_mineru.txt
+!requirements_mineru_lock.txt
+
+# Environment
+.env
+.env.local
+.env.*
+
+# Logs
+*.log
+
+# Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 .Python
+env/
 venv/
 .venv/
-env/
-ENV/
-.ENV/
-pip-log.txt
-pip-delete-this-directory.txt
-.tox/
+.ENV
+.python-version
+.pytest_cache/
+.mypy_cache/
 .coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.log
-.git/modules/
+coverage/
+htmlcov/
+
+# Build and distribution
+dist/
+build/
+*.egg-info/
+.eggs/
+.installed.cfg
+lib/
+lib64/
+parts/
+sdist/
+develop-eggs/
+pip-delete-this-directory.txt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db
 ```

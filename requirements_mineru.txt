@@ -5,6 +5,7 @@ torchaudio==2.4.1
 accelerate
 mineru[all]
 transformers==4.57.2
+huggingface-hub<1.0,>=0.34.0
 shapely
 modelscope
 pypdfium2==4.30.0
