@@ -3,6 +3,9 @@ import shutil
 import sys
 import subprocess
 import time
+import json
+import zipfile
+from datetime import datetime
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -14,6 +17,7 @@ EXPORT_ENV_DIR = EXPORT_ROOT / ENV_NAME
 ENV_DIR = ROOT_DIR / "envs" / ENV_NAME
 MODEL_ROOT = ROOT_DIR / "models"
 WHEEL_DIR = ROOT_DIR / "wheels" / "mineru"
+PATCH_DIR = ROOT_DIR / "patch"
 REQ_FILE_NAME = "requirements_mineru.txt"
 
 # --- 颜色与格式 ---
@@ -190,10 +194,16 @@ def main():
     print(f"{Color.BOLD}   请选择操作模式{Color.END}")
     print(f"{Color.YELLOW}====================================================={Color.END}")
     print(f"  {Color.BOLD}[1] 完整部署流程{Color.END} - 复制环境、安装依赖、配置模型")
-    print(f"  {Color.BOLD}[2] 仅运行冒烟测试{Color.END} - 跳过部署，直接测试现有环境")
-    choice = input(f"\n  请选择 (1/2) [默认 1]: ").strip()
+    print(f"  {Color.BOLD}[2] 应用增量更新补丁{Color.END} - 从补丁包安装/升级依赖")
+    print(f"  {Color.BOLD}[3] 仅运行冒烟测试{Color.END} - 跳过部署，直接测试现有环境")
+    choice = input(f"\n  请选择 (1/2/3) [默认 1]: ").strip()
     
     if choice == "2":
+        # 应用增量补丁模式
+        apply_patch()
+        input("按任意键退出...")
+        return
+    elif choice == "3":
         # 仅运行冒烟测试模式
         run_smoke_test_only()
         return
